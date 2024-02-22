@@ -2,6 +2,8 @@
 import '@tensorflow/tfjs-backend-webgl';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 import { ref, watch, watchEffect } from 'vue';
+import { usePoseStore } from './stores/pose';
+import { useVideoSourceStore } from './stores/videoSource';
 
 const ratioToHex16 = (f: number) => {
     if (f < 0) return '00';
@@ -9,7 +11,8 @@ const ratioToHex16 = (f: number) => {
     const hex = Math.floor(f * 255).toString(16);
     return hex.length === 1 ? `0${hex}` : hex;
 }
-
+const poseStore = usePoseStore();
+const videoSourceStore = useVideoSourceStore();
 const detector = await poseDetection.createDetector(
     poseDetection.SupportedModels.MoveNet,
     {
@@ -17,12 +20,14 @@ const detector = await poseDetection.createDetector(
         enableSmoothing: true,
 
     });
-let captureStream = ref<MediaStream | false>(false);
 let videoElement = ref<HTMLVideoElement | false>(false);
 let poseDetectionIsRunning = ref(false);
 let canvasElement = ref<HTMLCanvasElement | false>(false);
 let context: CanvasRenderingContext2D | null = null;
 let drawnPoints = ref(0);
+
+let requestedAnimationFrame: number | null = null;
+let requestedVideoFrame: number | null = null;
 
 const resizeCanvas = () => {
     if (!canvasElement.value) return;
@@ -32,41 +37,20 @@ const resizeCanvas = () => {
     canvasElement.value.height = video.videoHeight;
 }
 
-const startCapture = async () => {
-    try {
-        captureStream.value =
-            await navigator.mediaDevices.getUserMedia({
-                video: {
-                    facingMode: 'user',
-                    width: 480,
-                    height: 480,
-
-                },
-                audio: false,
-            });
-
-
-    } catch (err) {
-        console.error(`Error: ${err}`);
-    }
-}
-
 
 watchEffect(async () => {
-    if (!captureStream.value) return;
+    if (!videoSourceStore.stream) return;
     if (!videoElement.value) return;
-    videoElement.value.srcObject = captureStream.value;
+    videoElement.value.srcObject = videoSourceStore.stream;
     await videoElement.value.load();
     await videoElement.value.play();
     poseDetectionIsRunning.value = true;
 });
 
-let requestedAnimationFrame: number | null = null;
-let requestedVideoFrame: number | null = null;
 watch(poseDetectionIsRunning, async (isRunning) => {
     if (isRunning) {
-        drawFrame();
         detectorFrame();
+        drawFrame();
     } else {
         cancelAnimationFrame(requestedAnimationFrame!);
         requestedAnimationFrame = null;
@@ -76,56 +60,13 @@ watch(poseDetectionIsRunning, async (isRunning) => {
     }
 });
 
-
-const linesMan = (() => {
-    let points: { [key: string]: [number, number] } = {};
-    const keypoint = (name: string, x: number, y: number) => {
-        points[name] = [x, y];
-    }
-    const tryPoint = (from: string, to: string): [number, number, number, number] | false => {
-        if (points[from] && points[to]) {
-            return [points[from][0], points[from][1], points[to][0], points[to][1]];
-        }
-        return false;
-    }
-    const reset = () => {
-        points = {};
-    }
-    const getLines = () => {
-        const lines: [number, number, number, number][] = [];
-        for (const [from, to] of [
-            ['left_ear', 'right_ear'],
-            ['left_eye', 'right_eye'],
-            ['left_shoulder', 'right_shoulder'],
-            ['right_shoulder', 'right_hip'],
-            ['left_shoulder', 'left_hip'],
-            ['left_elbow', 'left_shoulder'],
-            ['left_elbow', 'left_wrist'],
-            ['right_elbow', 'right_shoulder'],
-            ['right_elbow', 'right_wrist'],
-            ['left_hip', 'right_hip'],
-            ['left_hip', 'left_knee'],
-            ['left_knee', 'left_ankle'],
-            ['right_hip', 'right_knee'],
-            ['right_knee', 'right_ankle'],
-        ]) {
-            const tp = tryPoint(from, to);
-            if (tp) {
-                lines.push(tp);
-            }
-        }
-        return lines;
-    }
-    return { keypoint, getLines, reset };
-})()
-
 let videoFrameCallbackSupported = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 if(!videoFrameCallbackSupported){
     console.log('requestVideoFrameCallback not supported, using requestAnimationFrame instead.');
 }
 const detectorFrame = async () => {
     if (!videoElement.value) return;
-    if (!captureStream.value) return;
+    if (!videoSourceStore.stream) return;
     const video = videoElement.value;
     if (!video) return;
     const estimationConfig = {
@@ -143,10 +84,11 @@ const detectorFrame = async () => {
             };
         });
     }
+    
+    poseStore.timestamp(new Date().getTime());
     const poses = await detector.estimatePoses(video, estimationConfig);
 
-    linesMan.reset();
-
+    poseStore.reset();
 
     for (const pose of poses) {
         drawnPoints.value = pose.keypoints.length;
@@ -164,7 +106,7 @@ const detectorFrame = async () => {
                 // context.beginPath();
                 // context.arc(keypoint.x, keypoint.y, 5, 0, Math.PI * 2);
                 // context.fill();
-                linesMan.keypoint(keypoint.name, keypoint.x, keypoint.y);
+                poseStore.keypoint(keypoint.name, keypoint.x, keypoint.y);
             }
 
         }
@@ -172,16 +114,16 @@ const detectorFrame = async () => {
     if (poseDetectionIsRunning.value) {
         if (videoFrameCallbackSupported) {
             requestedVideoFrame = video.requestVideoFrameCallback(detectorFrame);
-        } else {
-            // requestedVideoFrame = requestAnimationFrame(detectorFrame);
-        }
+        } /* else {
+            will happen on frame function
+        } */
     }else{
         console.log('stopped running');
     }
 
 }
 const drawFrame = async () => {
-    if (!captureStream.value) return;
+    if (!videoSourceStore.stream) return;
     if (!canvasElement.value) return;
 
     if (!context) {
@@ -196,7 +138,7 @@ const drawFrame = async () => {
     context.strokeStyle = '#00FF00';
     context.lineWidth = 2;
     context.clearRect(0, 0, canvasElement.value.width, canvasElement.value.height);
-    const segments = linesMan.getLines();
+    const segments = poseStore.getLines();
     for (const segment of segments) {
         context.beginPath();
         context.moveTo(segment[0], segment[1]);
@@ -223,15 +165,12 @@ watchEffect(() => {
 </script>
 <template>
     <div>
-        <template v-if="captureStream">
+        <template v-if="videoSourceStore.stream">
             <div class="viewport">
                 <video ref="videoElement" autoplay></video>
                 <canvas ref="canvasElement"></canvas>
                 <!-- {{ poseDetectionIsRunning }}, {{ drawnPoints }} -->
             </div>
-        </template>
-        <template v-else>
-            <button @click="startCapture">Start Capture</button>
         </template>
     </div>
 </template>
@@ -252,5 +191,8 @@ watchEffect(() => {
     width: 100%;
     height: 100%;
     object-fit: contain;
+}
+.viewport video {
+    opacity: 0.5;
 }
 </style>
