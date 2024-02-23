@@ -4,6 +4,7 @@ import * as poseDetection from '@tensorflow-models/pose-detection';
 import { ref, watch, watchEffect } from 'vue';
 import { usePoseStore } from './stores/pose';
 import { useVideoSourceStore } from './stores/videoSource';
+import { useMovementStore } from './stores/movement';
 
 const ratioToHex16 = (f: number) => {
     if (f < 0) return '00';
@@ -12,6 +13,7 @@ const ratioToHex16 = (f: number) => {
     return hex.length === 1 ? `0${hex}` : hex;
 }
 const poseStore = usePoseStore();
+const movementStore = useMovementStore();
 const videoSourceStore = useVideoSourceStore();
 const detector = await poseDetection.createDetector(
     poseDetection.SupportedModels.MoveNet,
@@ -25,7 +27,6 @@ let poseDetectionIsRunning = ref(false);
 let canvasElement = ref<HTMLCanvasElement | false>(false);
 let context: CanvasRenderingContext2D | null = null;
 let drawnPoints = ref(0);
-
 let requestedAnimationFrame: number | null = null;
 let requestedVideoFrame: number | null = null;
 
@@ -61,7 +62,7 @@ watch(poseDetectionIsRunning, async (isRunning) => {
 });
 
 let videoFrameCallbackSupported = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
-if(!videoFrameCallbackSupported){
+if (!videoFrameCallbackSupported) {
     console.log('requestVideoFrameCallback not supported, using requestAnimationFrame instead.');
 }
 const detectorFrame = async () => {
@@ -84,7 +85,7 @@ const detectorFrame = async () => {
             };
         });
     }
-    
+
     poseStore.timestamp(new Date().getTime());
     const poses = await detector.estimatePoses(video, estimationConfig);
 
@@ -108,16 +109,30 @@ const detectorFrame = async () => {
                 // context.fill();
                 poseStore.keypoint(keypoint.name, keypoint.x, keypoint.y);
             }
-
         }
     }
+    const neck = poseStore.getLine('left_shoulder', 'right_shoulder');
+    if (neck) {
+        const avgx = (neck[0] + neck[2]) / 2;
+        const avgy = (neck[1] + neck[3]) / 2;
+        poseStore.keypoint('neck', avgx, avgy);
+    }
+    const headCenter = poseStore.getLine('left_ear', 'right_ear');
+    if (headCenter) {
+        const avgx = (headCenter[0] + headCenter[2]) / 2;
+        const avgy = (headCenter[1] + headCenter[3]) / 2;
+        poseStore.keypoint('head_center', avgx, avgy);
+    }
+
+
+
     if (poseDetectionIsRunning.value) {
         if (videoFrameCallbackSupported) {
             requestedVideoFrame = video.requestVideoFrameCallback(detectorFrame);
         } /* else {
             will happen on frame function
         } */
-    }else{
+    } else {
         console.log('stopped running');
     }
 
@@ -131,7 +146,7 @@ const drawFrame = async () => {
     }
     if (!context) return;
 
-    if(!videoFrameCallbackSupported){
+    if (!videoFrameCallbackSupported) {
         detectorFrame();
     }
 
@@ -148,6 +163,25 @@ const drawFrame = async () => {
     if (poseDetectionIsRunning.value) {
         requestedAnimationFrame = requestAnimationFrame(drawFrame);
     }
+
+    const testAngles = [
+        poseStore.testAngle('left_shoulder', 'left_elbow', 'left_hip'),
+        poseStore.testAngle('left_elbow', 'left_shoulder', 'left_wrist'),
+        poseStore.testAngle('right_elbow', 'right_shoulder', 'right_wrist'),
+    ];
+
+    // this is not the correct place for the following, it's here for trying out
+    if(testAngles[0]){
+        movementStore.addSample(testAngles[0].angle, poseStore.currentTime());
+    }
+
+
+    for (let testAngle of testAngles) {
+        if (!testAngle) continue;
+        context.fillStyle = '#FF0000';
+        context.fillText(`${testAngle.angle.toFixed(2)}°`, testAngle.pos[0], testAngle.pos[1]);
+    }
+
 }
 
 watchEffect(() => {
@@ -192,6 +226,7 @@ watchEffect(() => {
     height: 100%;
     object-fit: contain;
 }
+
 .viewport video {
     opacity: 0.5;
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AnalysisPlotter from './AnalysisPlotter.vue';
 import HeadsUp from './HeadsUp.vue';
 import TensorFlowPose from './TensorFlowPose.vue';
 </script>
@@ -11,4 +12,5 @@ import TensorFlowPose from './TensorFlowPose.vue';
     </template>
   </Suspense>
   <HeadsUp />
+  <AnalysisPlotter />
 </template>
