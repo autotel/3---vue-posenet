@@ -22,6 +22,7 @@ export const useMovementStore = defineStore("movement", () => {
         prevFrameTime = now;
         angleAnalyzer.draw(drawScope, now, deltaTime);
     }
+    // TODO: get analyzer to factor DT's in!!
     const addSample = (angle: number, time: number) => {
         angleAnalyzer.addSample(angle, time);
         angleAnalyzer.analyze(time, 0);

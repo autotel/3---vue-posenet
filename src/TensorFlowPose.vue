@@ -171,8 +171,11 @@ const drawFrame = async () => {
     ];
 
     // this is not the correct place for the following, it's here for trying out
-    if(testAngles[0]){
-        movementStore.addSample(testAngles[0].angle, poseStore.currentTime());
+    if(testAngles[0] && testAngles[1]){
+        // Also, we need to update BPM analyser and plotter to factor delta times in
+        movementStore.addSample(
+            (testAngles[0].angle + testAngles[1].angle) / 2,
+        poseStore.currentTime());
     }
 
 
