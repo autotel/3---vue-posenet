@@ -5,6 +5,7 @@ import { ref, watch, watchEffect } from 'vue';
 import { usePoseStore } from './stores/pose';
 import { useVideoSourceStore } from './stores/videoSource';
 import { useMovementStore } from './stores/movement';
+import *  as tf from '@tensorflow/tfjs-core';
 
 const ratioToHex16 = (f: number) => {
     if (f < 0) return '00';
@@ -15,6 +16,10 @@ const ratioToHex16 = (f: number) => {
 const poseStore = usePoseStore();
 const movementStore = useMovementStore();
 const videoSourceStore = useVideoSourceStore();
+
+await tf.ready();
+console.log("back-end",tf.getBackend())
+
 const detector = await poseDetection.createDetector(
     poseDetection.SupportedModels.MoveNet,
     {
